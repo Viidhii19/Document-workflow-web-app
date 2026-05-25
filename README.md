@@ -1,74 +1,124 @@
-# Akino AI Document Workflow
+# 🚀 Akino: AI-Powered Document Workflow
 
-A fullstack AI-powered document workflow application for uploading PDF documents, chatting with them through a RAG pipeline, and viewing highlighted response sources directly inside the PDF viewer.
+Akino is a local, fullstack AI-powered document workflow application that delivers high-precision Retrieval-Augmented Generation (RAG) over PDF documents. It enables users to upload PDFs, read them via a highly polished in-app PDF viewer, ask document-specific questions, and view interactive, pixel-perfect text highlights of citation sources directly within the rendered PDF pages.
 
-For system design details, see [ARCHITECTURE.md](ARCHITECTURE.md).
+---
 
-## Features
+## ✨ Features & Architecture Highlights
 
-- **React + TypeScript frontend** built with Vite, Zustand, `react-pdf`, and `react-markdown`.
-- **FastAPI Python backend** for document upload, document listing, PDF serving, chat history, and document Q&A.
-- **PDF document workflow** with upload, list/select, in-app viewing, and chat against uploaded PDFs.
-- **Local RAG pipeline** using ChromaDB for vector search and PyMuPDF when available, with a `pypdf` fallback for text extraction.
-- **Free AI provider support** through OpenRouter. The default model is configured in `backend/app/services/rag_pipeline.py` and can be overridden with `OPENROUTER_MODEL`.
-- **Deterministic citation contract** where the backend creates exact citation candidates from retrieved document text and the model returns only citation IDs.
-- **PDF source highlighting** where the frontend matches citations against the rendered PDF text layer and draws highlight overlays over the referenced text.
-- **Lightweight local metadata storage** using JSON files in `backend/data`.
+*   **⚡ Modern Fullstack Architecture:** Powered by a React + TypeScript frontend (Vite, Zustand, Tailwind/Vanilla CSS) and a robust Python FastAPI backend.
+*   **📚 In-App PDF Workspace:** Implements premium side-by-side reading and chatting using `react-pdf` and standard HTML5 Canvas text layers.
+*   **🎯 Strict Backend-Driven Citation Contract:** Rather than allowing the LLM to hallucinate or manufacture sources, the FastAPI backend constructs deterministic citation candidates from actual retrieved chunks. The LLM only returns the matching candidate IDs, which the backend then maps back to the precise page and source text.
+*   **🖋️ Precise DOM-Range Highlighting:** The frontend dynamically builds a normalized character index of the rendered PDF text-layer DOM nodes, matches citation quotes, and draws custom overlay highlight shapes over multi-line text spans.
+*   **🗄️ Hybrid Local Vector Storage:** Combines local JSON metadata storage for document structures with ChromaDB for highly efficient vector embeddings and vector similarity queries.
+*   **🤖 Multi-LLM Provider Support:** Optimized for OpenRouter's free and premium models, with seamless environment overrides.
 
-## Setup Instructions
+---
+
+## 🛠️ Setup Instructions
 
 ### 1. Prerequisites
+Ensure you have the following installed on your machine:
+*   **Node.js** (v16 or higher)
+*   **Python** (v3.9 or higher)
+*   **An OpenRouter or Gemini API Key**
 
-- Node.js 16+
-- Python 3.9+
-- OpenRouter API key
+---
 
-### 2. Backend Setup
+### 2. Backend Setup (FastAPI)
 
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
+1. **Navigate to the backend directory:**
+   ```bash
+   cd backend
+   ```
 
-Create a `.env` file in the `backend` directory:
+2. **Create and activate a virtual environment:**
+   *   **Windows (cmd):**
+       ```cmd
+       python -m venv venv
+       venv\Scripts\activate
+       ```
+   *   **Windows (PowerShell):**
+       ```powershell
+       python -m venv venv
+       .\venv\Scripts\Activate.ps1
+       ```
+   *   **macOS / Linux:**
+       ```bash
+       python3 -m venv venv
+       source venv/bin/activate
+       ```
 
-```env
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-```
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Start the backend:
+4. **Configure your environment variables:**
+   Create a `.env` file directly inside the `backend/` folder:
+   ```env
+   # API Keys
+   OPENROUTER_API_KEY="your_openrouter_key_here"
+   GEMINI_API_KEY=""  # Optional: For direct Gemini API usage
+   
+   # Optional configurations
+   OPENROUTER_MODEL="google/gemini-2.5-flash"  # Custom model override
+   ```
 
-```bash
-uvicorn app.main:app --reload --port 8000
-```
+   > [!IMPORTANT]
+   > Ensure `.env` is never committed to Git. The root `.gitignore` is pre-configured to safely block all `.env` files from being tracked.
 
-The API runs at `http://localhost:8000`, and Swagger docs are available at `http://localhost:8000/docs`.
+5. **Launch the FastAPI application:**
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   ```
+   *   The server will start at `http://localhost:8000`.
+   *   Interactive OpenAPI docs are available at `http://localhost:8000/docs`.
 
-### 3. Frontend Setup
+---
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+### 3. Frontend Setup (React + Vite)
 
-The web app runs at `http://localhost:5173`.
+1. **Navigate to the frontend directory:**
+   ```bash
+   cd ../frontend
+   ```
 
-## Usage
+2. **Install node dependencies:**
+   ```bash
+   npm install
+   ```
 
-1. Open the frontend in your browser.
-2. Upload a PDF document from the sidebar.
-3. Select an uploaded document to view it inside the app.
-4. Ask questions in the AI assistant panel.
-5. Click citation buttons to jump to the referenced page and highlight the cited source text.
+3. **Run the local development server:**
+   ```bash
+   npm run dev
+   ```
+   *   The web application will launch at `http://localhost:5173`.
 
-## Current Scope
+---
 
-- Document management includes uploading, listing, selecting, viewing, and chatting with PDFs.
-- The citation system is designed to prefer refusal over unsupported answers when retrieval confidence is weak.
-- Scanned or image-only PDFs require OCR, which is not included in this version.
-- For production, replace JSON metadata storage with a database and move PDF ingestion into a background worker.
-# AI-powered-document-workflow-web-app
-# Document-workflow-web-app
+## 💡 How To Use the Workspace
+
+1. **Upload a PDF:** Drag and drop or click upload in the sidebar panel to ingest your document.
+2. **Select & View:** Click on any uploaded document in the list to load it into the central PDF rendering viewport.
+3. **Conversational Q&A:** Use the right chat assistant panel to ask questions. 
+4. **Trace Citations:** Click on the generated citation markers (e.g., `[1]`) in the chat response. The PDF viewer will automatically scroll to the cited page and draw a vibrant highlighted overlay over the source text.
+
+---
+
+## 🛠️ Troubleshooting & Helpers
+
+### 🔒 Resolving Blocked Git Pushes (Secret Leaks)
+If you accidentally committed a secret API key and GitHub Push Protection blocks your push:
+1. Do **not** panic. We have provided an automated cleanup script inside the workspace.
+2. Run the following command at the root of your project:
+   ```bash
+   python fix_git_secret.py
+   ```
+3. Once the script has successfully stripped the keys from your local commit history, push again:
+   ```bash
+   git push -u origin main
+   ```
+
+### 📄 Parser Failures
+*   **PyMuPDF vs. pypdf:** The system tries to use PyMuPDF for accurate text layer alignment. If it fails to compile on your system, the backend automatically falls back to `pypdf` to parse text and load the database.

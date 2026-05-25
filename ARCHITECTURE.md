@@ -1,116 +1,197 @@
-# Architecture Overview and Implementation Notes
+# 🏛️ Architecture Overview and Implementation Notes
 
-Akino is a local fullstack RAG document workflow application. It lets users upload PDF files, view them in the browser, ask document-grounded questions, and highlight cited source text inside the PDF viewer.
+Akino is a local, production-inspired Retrieval-Augmented Generation (RAG) system tailored specifically for document-level Q&A with strict citation verification and dynamic PDF highlighting. This document outlines the system architecture, core design patterns, data flows, and advanced implementation decisions.
 
-## System Architecture
+---
 
-1. **Frontend: React + TypeScript + Vite**
-   - Main shell: `frontend/src/App.tsx`
-   - PDF viewer: `frontend/src/components/DocumentViewer/PdfViewer.tsx`
-   - Chat UI: `frontend/src/components/Chat/ChatInterface.tsx`
-   - Sidebar/document list: `frontend/src/components/Layout/Sidebar.tsx`
-   - Global state: Zustand store in `frontend/src/store/useAppStore.ts`
+## 🗺️ System Architecture
 
-2. **Backend: FastAPI**
-   - App entry: `backend/app/main.py`
-   - Document routes: `backend/app/api/endpoints/documents.py`
-   - Chat routes: `backend/app/api/endpoints/chat.py`
-   - Local metadata store: `backend/app/models/database.py`
+The project is structured as a decoupled fullstack application:
 
-3. **Document Processing**
-   - PDF text extraction lives in `backend/app/services/pdf_parser.py`.
-   - PyMuPDF is preferred when installed because it generally preserves text order well.
-   - `pypdf` is kept as a fallback so the app can still parse text PDFs if PyMuPDF is unavailable.
+```mermaid
+graph TD
+    subgraph Frontend [React + TS + Vite]
+        UI[App Shell] --> State[Zustand Store]
+        UI --> PDF[PdfViewer react-pdf]
+        UI --> Chat[ChatInterface]
+        PDF --> HL[DOM-Range Highlight Engine]
+    end
 
-4. **Vector Store**
-   - ChromaDB persists embeddings locally under `backend/data/chromadb`.
-   - Chunks include document ID, page number, and chunk index metadata.
+    subgraph Backend [FastAPI]
+        API[API Endpoints] --> Ingestion[PDF Parser & Chunker]
+        API --> QueryEngine[RAG Query Engine]
+        Ingestion --> VectorDB[(ChromaDB Vector Store)]
+        Ingestion --> FileDB[(JSON Metadata Store)]
+        QueryEngine --> LLM[OpenRouter / Gemini Client]
+    end
 
-5. **AI Provider**
-   - OpenRouter is used for answer generation.
-   - The default free model is configured in `backend/app/services/rag_pipeline.py`.
-   - `OPENROUTER_MODEL` can override the default model.
+    Chat <-->|HTTP JSON| API
+    PDF <-->|GET /pdf| API
+```
 
-## Core Workflows
+### 1. Frontend Architecture
+*   **App Shell (`frontend/src/App.tsx`):** Coordinates the sidebar layout, PDF viewport, and AI conversation panels.
+*   **State Management (`frontend/src/store/useAppStore.ts`):** Managed globally via **Zustand** to synchronize active documents, loaded chat histories, active citations, and application-wide loading indicators.
+*   **Dynamic Highlighting Engine (`frontend/src/components/DocumentViewer/PdfViewer.tsx`):** Listens to citation focus changes and translates plain-text citation quotes into exact overlay highlights in the PDF's text layer using a custom DOM range calculator.
 
-### PDF Upload and Ingestion
+### 2. Backend Architecture
+*   **FastAPI Web Framework (`backend/app/main.py`):** Serves API endpoints, handles errors, and manages CORS policies.
+*   **Ingestion Pipeline (`backend/app/services/pdf_parser.py`):** Orchestrates physical PDF loading, text extraction, page normalization, sliding window chunking, and vector encoding.
+*   **Local Persistence Layer:**
+    *   **Vector Database:** **ChromaDB** (stored under `backend/data/chromadb`) index vectors and document metadata for search queries.
+    *   **Document Registry:** Structured JSON database (`backend/data/documents.json`) tracking document names, file locations, page counts, and upload timestamps.
 
-1. The frontend sends a PDF as `multipart/form-data` to `/api/documents/upload`.
-2. The backend stores the file under `backend/uploads`.
-3. Text is extracted page by page.
-4. Text is normalized and split into overlapping chunks.
-5. Chunks are inserted into ChromaDB with document/page metadata.
-6. Basic document metadata is saved to `backend/data/documents.json`.
+---
 
-### Chat and RAG Query
+## 🔄 Core Data Workflows
 
-1. The frontend sends `{ document_id, message }` to `/api/chat/query`.
-2. The backend verifies that the document exists.
-3. ChromaDB retrieves relevant chunks for the query.
-4. The backend checks retrieval confidence. Weak retrieval returns:
+### 📥 1. PDF Upload and Ingestion Flow
 
-   ```text
-   I don't know based on the provided document.
-   ```
+```mermaid
+sequenceDiagram
+    participant User as User (UI)
+    participant API as FastAPI Upload API
+    participant Parser as PDF Parser (PyMuPDF)
+    participant Chunker as Text Chunker
+    participant Vector as ChromaDB
+    participant DB as JSON Registry
 
-5. The backend creates exact citation candidates from retrieved chunk text.
-6. The LLM receives:
-   - retrieved document context
-   - citation candidates
-   - instructions to return JSON only
-   - citation IDs only, not invented quotes or pages
-7. The backend maps valid citation IDs back to exact quotes and pages.
-8. If the model gives an unsupported answer without valid citations, the backend refuses instead of attaching unrelated citations.
+    User->>API: POST /api/documents/upload (Multipart PDF)
+    API->>API: Save raw PDF to backend/uploads/
+    API->>Parser: Extract text page-by-page
+    Parser-->>API: List of [Page Number, Extracted Text]
+    API->>Chunker: Sliding-window chunking
+    Chunker-->>API: List of text chunks + page metadata
+    API->>Vector: Generate embeddings & upsert chunks
+    API->>DB: Append document metadata (UUID, filename, page_count)
+    API-->>User: 201 Created (Document Metadata)
+```
 
-## Citation and Highlighting Design
+1.  **Extraction:** PyMuPDF (`fitz`) is preferred due to superior text order preservation. If PyMuPDF is not compiled, the system automatically uses a pure-python `pypdf` fallback.
+2.  **Chunking:** Documents are split using a sliding window algorithm (chunk size: ~1000 characters, overlap: ~200 characters) to ensure contextual continuity across chunk boundaries.
+3.  **Vectorization:** Embeddings are generated locally and inserted into ChromaDB with comprehensive metadata tags (`document_id`, `page_number`, `chunk_index`).
 
-The citation pipeline is intentionally backend-owned:
+---
 
-- The model does **not** create quote text.
-- The model does **not** create page numbers.
-- The backend creates citation candidates from actual retrieved document text.
-- The model returns only candidate IDs.
-- The backend returns exact citation payloads to the frontend.
+### 💬 2. RAG Query and Backend-Driven Citation Flow
 
-The frontend does not rely on PDF coordinate extraction from the backend. Instead:
+A key innovation of Akino is the **Strict Citation Contract**, which protects the system against LLM hallucinations.
 
-1. `react-pdf` renders the page and text layer.
-2. The viewer builds a normalized character index from text-layer DOM nodes.
-3. The citation quote is normalized the same way.
-4. A DOM `Range` is created over the matched text.
-5. Highlight overlays are drawn from the range rectangles.
-6. Highlights recompute after page render, citation changes, zoom changes, and resize events.
+```mermaid
+sequenceDiagram
+    participant Client as React Client
+    participant Engine as FastAPI Chat Engine
+    participant Chroma as ChromaDB
+    participant LLM as OpenRouter / Gemini
+    
+    Client->>Engine: POST /api/chat/query { document_id, message }
+    Engine->>Chroma: Retrieve top k chunks for query
+    Chroma-->>Engine: Chunks + Metadatas (Pages, Text)
+    Engine->>Engine: Filter weak matches / Refuse if score < threshold
+    Engine->>Engine: Formulate Citation Candidates (IDs 1..N mapped to text/page)
+    Engine->>LLM: Send Context + Candidates + Strict JSON Schema Instruction
+    LLM-->>Engine: JSON Response { answer, citation_ids: [1, 3] }
+    Engine->>Engine: Re-verify & reconstruct full citations (Quote, Page)
+    Engine-->>Client: 200 OK { response_text, citations: [...] }
+```
 
-This approach is more robust than per-text-item matching and supports multiline citations across multiple PDF text spans.
+#### 🛡️ The Citation Contract Prompt Pattern:
+The backend constructs a robust instruction prompt containing a list of numbered **Citation Candidates**:
+```text
+Context:
+[Candidate 1] (Page 2): "Our revenue increased by 20% in the third quarter."
+[Candidate 2] (Page 4): "Operating costs remained stable at $4.5 million."
 
-## State Management
+Instructions:
+You must answer the user's question using ONLY the provided candidates. 
+For each fact you state, you must reference the exact Candidate ID.
+Your output must match the JSON structure:
+{
+  "answer": "The company saw a 20% increase in revenue [1] while maintaining stable costs [2].",
+  "citations": [1, 2]
+}
+```
 
-Zustand stores:
+If the LLM returns citation IDs that were not part of the candidate list, or tries to answer unsupported questions, the backend's validation layer rejects the hallucinated details and enforces a graceful refusal.
 
-- uploaded document list
-- active document
-- chat history
-- active citation
-- loading state placeholder
+---
 
-Changing the active document clears stale chat/citation state to avoid highlighting a citation from the previous document.
+## 🎨 Citation Highlighting Design
 
-## API Summary
+Traditional RAG systems return page numbers, forcing users to read through entire pages. Akino solves this by implementing **pixel-perfect character-range highlighting**:
 
-- `POST /api/documents/upload` uploads and ingests a PDF.
-- `GET /api/documents/` lists uploaded documents.
-- `GET /api/documents/{document_id}/pdf` serves the original PDF.
-- `POST /api/chat/query` sends a document question to the RAG pipeline.
-- `GET /api/chat/{document_id}/history` returns stored chat history.
+```text
+               PDF RENDER LAYERS IN FRONTEND
++-----------------------------------------------------------+
+|  Highlight Overlay Layer (Drawn over text using DOM Range) |
+|  [===========================] (Vibrant Yellow Box)       |
++-----------------------------------------------------------+
+|  SVG/HTML Text Layer (Normal browser text spans)           |
+|  "Our revenue increased by 20% in the third quarter..."   |
++-----------------------------------------------------------+
+|  Canvas Image Layer (Visual page layout & shapes)         |
++-----------------------------------------------------------+
+```
 
-## Production Considerations
+### How Character-Range Matching Works:
+1.  **Text layer rendering:** `react-pdf` renders the page and outputs standard HTML text layer container nodes (`.textLayer`).
+2.  **Character Normalization:** The client reads all text content within the active page's text layer and creates a single contiguous string, storing the exact character index mapping to each underlying DOM text node.
+3.  **Sub-string Alignment:** The backend's verified citation quote is normalized in the same way (collapsing whitespaces, converting to lowercase). A fast string search identifies the exact character offsets of the quote within the page's compiled string.
+4.  **DOM Range Creation:** A standard browser `Range` object is created with its start and end offsets mapped directly across the text nodes.
+5.  **Overlay Drawing:** The coordinate bounding boxes (`Range.getClientRects()`) are collected. The viewer draws absolute positioned overlay shapes at those precise coordinates.
+6.  **Responsive Redrawing:** Highlights automatically recalculate and adjust coordinates during zoom changes, resize events, and page transitions.
 
-The current implementation is suitable for a local assignment/demo. For production:
+---
 
-- Move ingestion to a background queue such as Celery/RQ.
-- Replace JSON files with PostgreSQL or SQLite plus proper locking.
-- Add authentication and tenant isolation.
-- Add upload size limits, MIME sniffing, and filename sanitization.
-- Add OCR support for scanned PDFs.
-- Add explicit embedding-model configuration and retrieval evaluation tests.
-- Add better rate-limit handling for OpenRouter failures.
+## 📂 Data Storage Models
+
+### 1. Document registry (`backend/data/documents.json`)
+```json
+{
+  "docs": {
+    "9d231e51-40ef-4f10-b98a-a636eb0135d5": {
+      "id": "9d231e51-40ef-4f10-b98a-a636eb0135d5",
+      "filename": "Q3_Report.pdf",
+      "filepath": "backend/uploads/9d231e51-40ef-4f10-b98a-a636eb0135d5.pdf",
+      "page_count": 12,
+      "uploaded_at": "2026-05-25T15:17:33"
+    }
+  }
+}
+```
+
+### 2. Vector Structure (ChromaDB)
+*   **Collection name:** `document_workflow`
+*   **Vector Dimensions:** Determined by local sentence-transformers (default: `384` for `all-MiniLM-L6-v2`).
+*   **Metadata payload:**
+    ```json
+    {
+      "document_id": "9d231e51-40ef-4f10-b98a-a636eb0135d5",
+      "page_number": 2,
+      "chunk_index": 5
+    }
+    ```
+
+---
+
+## 🔌 API Route Summary
+
+| Method | Endpoint | Description | Payload Schema | Response Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| **`POST`** | `/api/documents/upload` | Uploads & ingests PDF | `multipart/form-data` | `DocumentMetadata` |
+| **`GET`** | `/api/documents/` | Lists all documents | None | `List[DocumentMetadata]` |
+| **`GET`** | `/api/documents/{id}/pdf` | Downloads/serves original PDF | URL Parameter | File stream (`application/pdf`) |
+| **`POST`** | `/api/chat/query` | Queries the RAG pipeline | `{ document_id, message }` | `{ answer, citations: [...] }` |
+| **`GET`** | `/api/chat/{id}/history` | Fetches session chat history | URL Parameter | `List[ChatMessage]` |
+
+---
+
+## 🛡️ Production Considerations & Enhancements
+
+For moving this application from local development to production, the following upgrades are recommended:
+
+1.  **Asynchronous Ingestion Queues:** Move PDF extraction, chunking, and vector embedding from synchronous web requests into background queues (e.g., **Celery** or **Redis Queue**) to prevent timeouts on large documents.
+2.  **Relational Database:** Replace the local JSON registries with a SQL database (**PostgreSQL** or **SQLite**) managed via SQLAlchemy or Prisma to support transaction safety, complex queries, and atomic operations.
+3.  **Authentication & Multi-Tenancy:** Secure all routes by implementing JSON Web Tokens (JWT) and isolating vectors inside ChromaDB using tenant partitions or strict document metadata filtering.
+4.  **Scanned PDF support (OCR):** Add a pre-processing pipeline using an OCR tool (e.g., Tesseract OCR or PaddleOCR) to extract text layers from scanned/image-only PDFs.
+5.  **Rate-Limiting & High Availability:** Add circuit breakers for OpenRouter API requests, implement Redis cache layers, and set strict API rate limits to protect backend servers.
