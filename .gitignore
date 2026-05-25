@@ -1,0 +1,4 @@
+backend\.env
+frontend\.env
+backend\data\chromadb\chroma.sqlite3
+backend\data\chromadb\2709dc8d-3868-4eb1-be4c-949a55763360
