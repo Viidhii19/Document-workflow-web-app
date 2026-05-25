@@ -71,3 +71,4 @@ The web app runs at `http://localhost:5173`.
 - Scanned or image-only PDFs require OCR, which is not included in this version.
 - For production, replace JSON metadata storage with a database and move PDF ingestion into a background worker.
 # AI-powered-document-workflow-web-app
+# Document-workflow-web-app
