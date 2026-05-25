@@ -106,19 +106,5 @@ Ensure you have the following installed on your machine:
 
 ---
 
-## 🛠️ Troubleshooting & Helpers
-
-### 🔒 Resolving Blocked Git Pushes (Secret Leaks)
-If you accidentally committed a secret API key and GitHub Push Protection blocks your push:
-1. Do **not** panic. We have provided an automated cleanup script inside the workspace.
-2. Run the following command at the root of your project:
-   ```bash
-   python fix_git_secret.py
-   ```
-3. Once the script has successfully stripped the keys from your local commit history, push again:
-   ```bash
-   git push -u origin main
-   ```
-
 ### 📄 Parser Failures
 *   **PyMuPDF vs. pypdf:** The system tries to use PyMuPDF for accurate text layer alignment. If it fails to compile on your system, the backend automatically falls back to `pypdf` to parse text and load the database.
